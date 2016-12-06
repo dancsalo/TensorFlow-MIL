@@ -8,11 +8,11 @@ Purpose: Implement Convolutional Multiple Instance Learning for distributed lear
 """
 
 import sys
-sys.path.insert(1, '../')
+sys.path.append('../')
 
-from NNLayers import Layers
-from NNModel import Model
-from MNIST import Mnist
+from TensorBase.tensorbase.base import Model
+from TensorBase.tensorbase.base import Layers
+from TensorBase.tensorbase.data import Mnist
 
 import tensorflow as tf
 import numpy as np
