@@ -12,55 +12,52 @@ sys.path.append('../')
 
 from TensorBase.tensorbase.base import Model
 from TensorBase.tensorbase.base import Layers
-from TensorBase.tensorbase.data import Mnist
 
 import tensorflow as tf
 import numpy as np
+import argparse
+from tensorflow.examples.tutorials.mnist import input_data
+from tqdm import tqdm
 
 
 # Global Dictionary of Flags
-flags = {
-    'data_directory': 'MNIST_data/',
+flags = {  # data_directory not needed
     'save_directory': 'summaries/',
     'model_directory': 'conv_mil/',
-    'restore': True,
-    'restore_file': 'part_3.ckpt.meta',
-    'datasets': 'MNIST',
     'num_classes': 10,
     'image_dim': 28,
     'batch_size': 128,
     'display_step': 500,
     'weight_decay': 1e-7,
-    'lr_decay': 0.999,
-    'lr_iters': [(5e-3, 5000), (5e-3, 7500), (5e-4, 10000), (5e-5, 10000)]
 }
 
 
 class ConvMil(Model):
     def __init__(self, flags_input, run_num):
+        """ Initialize from Model class in TensorBase """
         super().__init__(flags_input, run_num)
-        self.print_log("Seed: %d" % flags['seed'])
         self.valid_results = list()
         self.test_results = list()
+        self.checkpoint_rate = 5  # save after this many epochs
+        self.valid_rate = 5  # validate after this many epochs
 
-    def _define_data(self):
-        self.data = Mnist(self.flags)
-        self.num_train_images = self.data.num_train_images
-        self.num_valid_images = self.data.num_valid_images
-        self.num_test_images = self.data.num_test_images
-
-    def _set_placeholders(self):
+    def _data(self):
+        """ Define all data-related parameters. Called by TensorBase. """
+        self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
+        self.num_train_images = self.mnist.train.num_examples
+        self.num_valid_images = self.mnist.validation.num_examples
+        self.num_test_images = self.mnist.test.num_examples
         self.x = tf.placeholder(tf.float32, [None, flags['image_dim'], flags['image_dim'], 1], name='x')
         self.y = tf.placeholder(tf.int32, shape=[None, flags['num_classes']], name='y')
-        self.lr = tf.placeholder(tf.float32, name='learning_rate')
 
-    def _set_summaries(self):
-        tf.scalar_summary("Total Loss", self.cost)
-        tf.scalar_summary("Cross Entropy Loss", self.xentropy)
-        tf.scalar_summary("Weight Decay Loss", self.weight)
-        tf.image_summary("x", self.x)
+    def _summaries(self):
+        """ Write summaries out to TensorBoard. Called by TensorBase. """
+        tf.summary.scalar("Total Loss", self.cost)
+        tf.summary.scalar("Cross Entropy Loss", self.xentropy)
+        tf.summary.scalar("Weight Decay Loss", self.weight)
 
     def _network(self):
+        """ Define neural network. Uses Layers class of TensorBase. Called by TensorBase. """
         with tf.variable_scope("model"):
             net = Layers(self.x)
             net.conv2d(5, 64)
@@ -71,82 +68,142 @@ class ConvMil(Model):
             net.conv2d(3, 128)
             net.conv2d(3, 128)
             net.maxpool()
-            net.conv2d(1, 64)
-            net.conv2d(1, 32)
             net.conv2d(1, self.flags['num_classes'], activation_fn=tf.nn.sigmoid)
             net.noisy_and(self.flags['num_classes'])
             self.y_hat = net.get_output()
             self.logits = tf.nn.softmax(self.y_hat)
 
     def _optimizer(self):
+        """ Set up loss functions and choose optimizer. Called by TensorBase. """
         const = 1/self.flags['batch_size']
-        self.xentropy = const * tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(self.y_hat, self.y, name='xentropy'))
+        self.xentropy = const * tf.reduce_sum(
+            tf.nn.softmax_cross_entropy_with_logits(labels=self.y, logits=self.y_hat, name='xentropy'))
         self.weight = self.flags['weight_decay'] * tf.add_n(tf.get_collection('weight_losses'))
         self.cost = tf.reduce_sum(self.xentropy + self.weight)
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.cost)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=flags['learning_rate']).minimize(self.cost)
 
-    def _generate_train_batch(self):
-        self.train_batch_y, train_batch_x = self.data.next_train_batch(self.flags['batch_size'])
-        self.train_batch_x = np.reshape(train_batch_x, [self.flags['batch_size'], self.flags['image_dim'], self.flags['image_dim'], 1])
+    def train(self):
+        """ Run training function for num_epochs. Save model upon completion. """
+        self.print_log('Training for %d epochs' % self.flags['num_epochs'])
 
-    def _generate_valid_batch(self):
-        self.valid_batch_y, valid_batch_x, valid_number, batch_size = self.data.next_valid_batch(self.flags['batch_size'])
-        self.valid_batch_x = np.reshape(valid_batch_x, [batch_size, self.flags['image_dim'], self.flags['image_dim'], 1])
-        return valid_number
+        for self.epoch in range(1, self.flags['num_epochs'] + 1):
+            for _ in tqdm(range(self.num_train_images)):
 
-    def _generate_test_batch(self):
-        self.test_batch_y, test_batch_x, test_number, batch_size = self.data.next_test_batch(self.flags['batch_size'])
-        self.test_batch_x = np.reshape(test_batch_x, [batch_size, self.flags['image_dim'], self.flags['image_dim'], 1])
-        return test_number
+                # Get minibatches of data
+                batch_x, batch_y = self.mnist.train.next_batch(flags['batch_size'])
+                batch_x = self.reshape_batch(batch_x)
 
-    def _run_train_iter(self):
-        rate = self.learn_rate * self.flags['lr_decay']
-        self.summary, _ = self.sess.run([self.merged, self.optimizer],
-                                        feed_dict={self.x: self.train_batch_x, self.y: self.train_batch_y,
-                                                   self.lr: rate})
+                # Run a training iteration
 
-    def _run_train_summary_iter(self):
-        rate = self.learn_rate * self.flags['lr_decay']
-        self.summary, self.loss, _ = self.sess.run([self.merged, self.cost, self.optimizer],
-                                                   feed_dict={self.x: self.train_batch_x, self.y: self.train_batch_y,
-                                                              self.lr: rate})
+                summary, loss, _ = self.sess.run([self.merged, self.cost, self.optimizer],
+                                                   feed_dict={self.x: batch_x, self.y: batch_y})
+                self._record_training_step(summary)
+            if self.step % (self.flags['display_step']) == 0:
+                # Record training metrics every display_step interval
+                self._record_train_metrics(loss)
 
-    def _run_valid_iter(self):
-        logits = self.sess.run([self.logits], feed_dict={self.x: self.valid_batch_x})
-        predictions = np.reshape(logits, [-1, self.flags['num_classes']])
-        correct_prediction = np.equal(np.argmax(self.valid_batch_y, 1), np.argmax(predictions, 1))
-        self.valid_results = np.concatenate((self.valid_results, correct_prediction))
+            ## Epoch finished
+            # Save model
+            if self.epoch % self.checkpoint_rate == 0:
+                self._save_model(section=self.epoch)
+            # Perform validation
+            if self.epoch % self.valid_rate == 0:
+                self.evaluate('valid')
 
-    def _run_test_iter(self):
-        logits = self.sess.run([self.logits], feed_dict={self.x: self.test_batch_x})
-        predictions = np.reshape(logits, [-1, self.flags['num_classes']])
-        correct_prediction = np.equal(np.argmax(self.test_batch_y, 1), np.argmax(predictions, 1))
-        self.test_results = np.concatenate((self.test_results, correct_prediction))
+    def evaluate(self, dataset):
+        """ Evaluate network on the valid/test set. """
 
-    def _record_train_metrics(self):
-        self.print_log("Batch Number: " + str(self.step) + ", Total Loss= " + "{:.6f}".format(self.loss))
+        # Initialize to correct dataset
+        print('Evaluating images in %s set' % dataset)
+        if dataset == 'valid':
+            batch_x, batch_y = self.mnist.validation.next_batch(flags['batch_size'])
+            batch_x = self.reshape_batch(batch_x)
+            num_images = self.num_valid_images
+            results = self.valid_results
+        else:
+            batch_x, batch_y = self.mnist.test.next_batch(flags['batch_size'])
+            batch_x = self.reshape_batch(batch_x)
+            num_images = self.num_test_images
+            results= self.test_results
 
-    def _record_valid_metrics(self):
-        accuracy = np.mean(self.valid_results)
-        self.print_log("Accuracy on Validation Set: %f" % accuracy)
-        file = open(self.flags['restore_directory'] + 'ValidAccuracy.txt', 'w')
-        file.write('Test set accuracy:')
-        file.write(str(accuracy))
-        file.close()
+        # Loop through all images in eval dataset
+        for _ in tqdm(range(num_images)):
+            logits = self.sess.run([self.logits], feed_dict={self.x: batch_x})
+            predictions = np.reshape(logits, [-1, self.flags['num_classes']])
+            correct_prediction = np.equal(np.argmax(self.valid_batch_y, 1), np.argmax(predictions, 1))
+            results = np.concatenate((results, correct_prediction))
 
-    def _record_test_metrics(self):
-        accuracy = np.mean(self.test_results)
-        self.print_log("Accuracy on Test Set: %f" % accuracy)
-        file = open(self.flags['restore_directory'] + 'TestAccuracy.txt', 'w')
-        file.write('Test set accuracy:')
+        # Calculate average accuracy and record in text file
+        self.record_eval_metrics(dataset)
+
+    #########################
+    ##   Helper Functions  ##
+    #########################
+
+    def reshape_batch(self, batch):
+        """ Reshape vector into image. Do not need if data that is loaded in is already in image-shape"""
+        return np.reshape(batch, [flags['batch_size'], self.flags['image_dim'], self.flags['image_dim'], 1])
+
+    def _print_metrics(self):
+        """ Helper function used by Model class in TensorBase """
+        self.print_log("Seed: %d" % flags['seed'])
+
+    def _record_train_metrics(self, loss):
+        """ Records the metrics at every display_step iteration """
+        self.print_log("Batch Number: " + str(self.step) + ", Total Loss= " + "{:.6f}".format(loss))
+
+    def _record_eval_metrics(self, dataset):
+        """ Record the accuracy on the eval dataset """
+        if dataset == 'valid':
+            accuracy = np.mean(self.valid_results)
+        else:
+            accuracy = np.mean(self.test_results)
+        self.print_log("Accuracy on %s Set: %f" % (dataset, accuracy))
+        file = open(self.flags['restore_directory'] + dataset + 'Accuracy.txt', 'w')
+        file.write('%s set accuracy:' % dataset)
         file.write(str(accuracy))
         file.close()
 
 
 def main():
-    flags['seed'] = np.random.randint(1, 1000, 1)[0]
-    model_mil = ConvMil(flags, run_num=1)
-    model_mil.valid()
+
+    # Parse Arguments
+    parser = argparse.ArgumentParser(description='Faster R-CNN Networks Arguments')
+    parser.add_argument('-n', '--run_num', default=0)  # Saves all under /save_directory/model_directory/Model[n]
+    parser.add_argument('-e', '--epochs', default=1)  # Number of epochs for which to train the model
+    parser.add_argument('-r', '--restore', default=0)  # Binary to restore from a model. 0 = No restore.
+    parser.add_argument('-m', '--model_restore',default=1)  # Restores from /save_directory/model_directory/Model[n]
+    parser.add_argument('-f', '--file_epoch', default=1)  # Restore filename: 'part_[f].ckpt.meta'
+    parser.add_argument('-t', '--train', default=1)  # Binary to train model. 0 = No train.
+    parser.add_argument('-v', '--eval', default=1)  # Binary to evalulate model. 0 = No eval.
+    parser.add_argument('-l', '--learn_rate', default=1e-3)  # learning Rate
+    parser.add_argument('-i', '--vis', default=0)  # enable visualizations
+    parser.add_argument('-g', '--gpu', default=0)  # specifiy which GPU to use
+    args = vars(parser.parse_args())
+
+    # Set Arguments
+    flags['seed'] = 1234  # Random seed
+    flags['run_num'] = int(args['run_num'])
+    flags['num_epochs'] = int(args['epochs'])
+    flags['restore_num'] = int(args['model_restore'])
+    flags['file_epoch'] = int(args['file_epoch'])
+    flags['learning_rate'] = float(args['learn_rate'])
+    flags['vis'] = True if (int(args['vis']) == 1) else False
+    flags['gpu'] = int(args['gpu'])
+
+    # Choose to restore or not.
+    if args['restore'] == 0:
+        flags['restore'] = False
+    else:
+        flags['restore'] = True
+        flags['restore_file'] = 'part_' + str(args['file_epoch']) + '.ckpt.meta'
+
+    # Run model. Train and/or Eval.
+    model = ConvMil(flags, flags['run_num'])
+    if int(args['train']) == 1:
+        model.train()
+    if int(args['eval']) == 1:
+        model.evaluate('test')
 
 
 if __name__ == "__main__":
