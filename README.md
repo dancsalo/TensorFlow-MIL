@@ -11,14 +11,20 @@ The implemented model uses the MNIST dataset for classification.
 The architecture presented in the paper involves a CNN, the noisyAND layer,
 followed by an additional fully connected layer with a joint cross entropy loss.
 
-![alt text][/png/arch.png]
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/dancsalo/TensorFlow-MIL/master/png/arch.png" width="1024"/>
+</p>
 
 The joint cross entropy loss is summed over all classes and compares the
 output of the MIL layer, `P_i`, and the output of the additional fully connected layer, `y_i`,
 to the class layer for the entire image, `t_i`. The authors claim that the
 additional fully connect layer will learn dependencies between classes.
 
-![alt text][/png/loss.png]
+<p align="center">
+  <img src="https://raw.githubusercontent.com/dancsalo/TensorFlow-MIL/master/png/loss.png" width="512"/>
+</p>
+
 
 ### Dependencies
  * Python 3.5 or greater
