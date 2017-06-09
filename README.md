@@ -8,14 +8,15 @@ The implemented model uses the MNIST dataset for classification.
 
 ### Paper Summary
 
-The architecture presented in the paper involves CNN, the noisyAND layer,
+The architecture presented in the paper involves a CNN, the noisyAND layer,
 followed by an additional fully connected layer with a joint cross entropy loss.
 
 ![alt text][/png/arch.png]
 
 The joint cross entropy loss is summed over all classes and compares the
 output of the MIL layer, `P_i`, and the output of the additional fully connected layer, `y_i`,
-to the class layer for the entire image, `t_i`.
+to the class layer for the entire image, `t_i`. The authors claim that the
+additional fully connect layer will learn dependencies between classes.
 
 ![alt text][/png/loss.png]
 
